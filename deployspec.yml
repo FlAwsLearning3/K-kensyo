@@ -1,0 +1,166 @@
+# =============================================================================
+# CodeBuild デプロイ用 buildspec
+# 
+# このファイルでは以下の処理を実行します：
+# 1. 必要なツール（jq）のインストール
+# 2. build_output.jsonから新しいイメージURIを取得
+# 3. ECSネイティブブルーグリーンデプロイスクリプトを実行
+# 
+# CodePipelineのDeployステージで使用され、
+# ビルドされた新しいイメージでブルーグリーンデプロイを自動実行
+# =============================================================================
+
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.8
+    commands:
+      - echo Installing jq...
+      - yum install -y jq
+      
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - echo Getting new image URI from build output...
+      - NEW_IMAGE_URI=$(cat build_output.json | jq -r '.image_uri')
+      - echo New image URI is $NEW_IMAGE_URI
+      
+  build:
+    commands:
+      - echo Starting ECS Native Blue-Green Deployment...
+      - |
+        cat > deploy_script.sh << 'EOF'
+        #!/bin/bash
+        set -e
+        
+        NEW_IMAGE="$1"
+        
+        echo "Starting ECS Native Blue-Green Deployment..."
+        echo "Cluster: $CLUSTER_NAME"
+        echo "Service: $SERVICE_NAME"
+        echo "New Image: $NEW_IMAGE"
+        
+        # Get current task definition
+        echo "Getting current task definition..."
+        CURRENT_TASK_DEF=$(aws ecs describe-services --cluster "$CLUSTER_NAME" --services "$SERVICE_NAME" --region "$AWS_DEFAULT_REGION" --query 'services[0].taskDefinition' --output text)
+        echo "Current task definition: $CURRENT_TASK_DEF"
+        
+        # Get current task definition details
+        TASK_DEF_JSON=$(aws ecs describe-task-definition --task-definition "$CURRENT_TASK_DEF" --region "$AWS_DEFAULT_REGION")
+        
+        # Create new task definition with updated image
+        echo "Creating new task definition with image: $NEW_IMAGE"
+        NEW_TASK_DEF_JSON=$(echo "$TASK_DEF_JSON" | jq --arg image "$NEW_IMAGE" '
+          .taskDefinition |
+          .containerDefinitions[0].image = $image |
+          del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .placementConstraints, .compatibilities, .registeredAt, .registeredBy)
+        ')
+        
+        # Register new task definition
+        NEW_TASK_DEF_ARN=$(echo "$NEW_TASK_DEF_JSON" | aws ecs register-task-definition --region "$AWS_DEFAULT_REGION" --cli-input-json file:///dev/stdin --query 'taskDefinition.taskDefinitionArn' --output text)
+        echo "New task definition registered: $NEW_TASK_DEF_ARN"
+        
+        # Get current listener configuration
+        echo "Getting current listener configuration..."
+        CURRENT_LISTENER=$(aws elbv2 describe-listeners --listener-arns "$LISTENER_ARN" --region "$AWS_DEFAULT_REGION")
+        CURRENT_TARGET_GROUP=$(echo "$CURRENT_LISTENER" | jq -r '.Listeners[0].DefaultActions[0].TargetGroupArn')
+        
+        # Determine which target group is currently active and which is standby
+        if [[ "$CURRENT_TARGET_GROUP" == "$BLUE_TARGET_GROUP_ARN" ]]; then
+          ACTIVE_TG="blue"
+          STANDBY_TG="green"
+          STANDBY_TG_ARN="$GREEN_TARGET_GROUP_ARN"
+          echo "Current active: Blue, deploying to: Green"
+        else
+          ACTIVE_TG="green"
+          STANDBY_TG="blue"
+          STANDBY_TG_ARN="$BLUE_TARGET_GROUP_ARN"
+          echo "Current active: Green, deploying to: Blue"
+        fi
+        
+        # Update service to use new task definition
+        echo "Updating ECS service with new task definition..."
+        aws ecs update-service \
+          --cluster "$CLUSTER_NAME" \
+          --service "$SERVICE_NAME" \
+          --task-definition "$NEW_TASK_DEF_ARN" \
+          --region "$AWS_DEFAULT_REGION" > /dev/null
+        
+        # Wait for service to stabilize
+        echo "Waiting for service to stabilize..."
+        aws ecs wait services-stable --cluster "$CLUSTER_NAME" --services "$SERVICE_NAME" --region "$AWS_DEFAULT_REGION"
+        
+        # Get the new tasks and register them with the standby target group
+        echo "Registering new tasks with standby target group ($STANDBY_TG)..."
+        TASK_ARNS=$(aws ecs list-tasks --cluster "$CLUSTER_NAME" --service-name "$SERVICE_NAME" --region "$AWS_DEFAULT_REGION" --query 'taskArns' --output text)
+        
+        for TASK_ARN in $TASK_ARNS; do
+          # Get task details
+          TASK_DETAILS=$(aws ecs describe-tasks --cluster "$CLUSTER_NAME" --tasks "$TASK_ARN" --region "$AWS_DEFAULT_REGION")
+          
+          # Extract ENI ID and get private IP
+          ENI_ID=$(echo "$TASK_DETAILS" | jq -r '.tasks[0].attachments[0].details[] | select(.name=="networkInterfaceId") | .value')
+          PRIVATE_IP=$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI_ID" --region "$AWS_DEFAULT_REGION" --query 'NetworkInterfaces[0].PrivateIpAddress' --output text)
+          
+          # Register target with standby target group
+          aws elbv2 register-targets \
+            --target-group-arn "$STANDBY_TG_ARN" \
+            --targets Id="$PRIVATE_IP",Port=8080 \
+            --region "$AWS_DEFAULT_REGION"
+          
+          echo "Registered task $TASK_ARN (IP: $PRIVATE_IP) with $STANDBY_TG target group"
+        done
+        
+        # Wait for targets to become healthy in standby target group
+        echo "Waiting for targets to become healthy in standby target group..."
+        while true; do
+          HEALTHY_COUNT=$(aws elbv2 describe-target-health --target-group-arn "$STANDBY_TG_ARN" --region "$AWS_DEFAULT_REGION" --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`] | length(@)')
+          TOTAL_COUNT=$(aws elbv2 describe-target-health --target-group-arn "$STANDBY_TG_ARN" --region "$AWS_DEFAULT_REGION" --query 'TargetHealthDescriptions | length(@)')
+          
+          echo "Healthy targets: $HEALTHY_COUNT/$TOTAL_COUNT"
+          
+          if [[ "$HEALTHY_COUNT" -eq "$TOTAL_COUNT" && "$TOTAL_COUNT" -gt 0 ]]; then
+            echo "All targets are healthy in standby target group"
+            break
+          fi
+          
+          sleep 10
+        done
+        
+        # Switch traffic to standby target group
+        echo "Switching traffic to $STANDBY_TG target group..."
+        aws elbv2 modify-listener \
+          --listener-arn "$LISTENER_ARN" \
+          --default-actions Type=forward,TargetGroupArn="$STANDBY_TG_ARN" \
+          --region "$AWS_DEFAULT_REGION" > /dev/null
+        
+        echo "Traffic switched successfully!"
+        
+        # Wait before cleaning up old target group
+        echo "Waiting 30 seconds before cleaning up old target group..."
+        sleep 30
+        
+        # Deregister old targets from the previously active target group
+        echo "Deregistering old targets from $ACTIVE_TG target group..."
+        OLD_TARGETS=$(aws elbv2 describe-target-health --target-group-arn "$CURRENT_TARGET_GROUP" --region "$AWS_DEFAULT_REGION" --query 'TargetHealthDescriptions[].Target' --output json)
+        
+        if [[ "$OLD_TARGETS" != "[]" ]]; then
+          echo "$OLD_TARGETS" | aws elbv2 deregister-targets \
+            --target-group-arn "$CURRENT_TARGET_GROUP" \
+            --targets file:///dev/stdin \
+            --region "$AWS_DEFAULT_REGION"
+          echo "Old targets deregistered from $ACTIVE_TG target group"
+        fi
+        
+        echo "Blue-Green deployment completed successfully!"
+        echo "Service Connect endpoint remains: app:8080"
+        EOF
+      - chmod +x deploy_script.sh
+      - ./deploy_script.sh "$NEW_IMAGE_URI"
+      
+  post_build:
+    commands:
+      - echo Deployment completed on `date`
