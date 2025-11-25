@@ -1,0 +1,12 @@
+FROM nginx:alpine
+
+# アプリケーションファイルをコピー
+COPY index.html /usr/share/nginx/html/
+
+# ポート8080で実行
+EXPOSE 8080
+
+# nginx設定を8080ポートに変更
+RUN sed -i 's/listen       80;/listen       8080;/' /etc/nginx/conf.d/default.conf
+
+CMD ["nginx", "-g", "daemon off;"]
