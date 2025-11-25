@@ -152,16 +152,15 @@ resource "aws_codepipeline" "main" {
     action {
       name             = "Source"
       category         = "Source"
-      owner            = "ThirdParty"
-      provider         = "GitHub"
+      owner            = "AWS"
+      provider         = "CodeStarSourceConnection"
       version          = "1"
       output_artifacts = ["source_output"]
 
       configuration = {
-        Owner      = var.github_owner
-        Repo       = var.github_repo
-        Branch     = var.github_branch
-        OAuthToken = var.github_token
+        ConnectionArn    = aws_codestarconnections_connection.github.arn
+        FullRepositoryId = "${var.github_owner}/${var.github_repo}"
+        BranchName       = var.github_branch
       }
     }
   }
@@ -200,6 +199,12 @@ resource "aws_codepipeline" "main" {
       }
     }
   }
+}
+
+# CodeStar Connection for GitHub
+resource "aws_codestarconnections_connection" "github" {
+  name          = "${var.app_name}-github-connection"
+  provider_type = "GitHub"
 }
 
 # Data source for current AWS account
@@ -394,6 +399,13 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           aws_codebuild_project.build.arn,
           aws_codebuild_project.deploy.arn
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "codestar-connections:UseConnection"
+        ]
+        Resource = aws_codestarconnections_connection.github.arn
       }
     ]
   })
