@@ -207,39 +207,5 @@ resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
 
 
 
-# Outputs
-output "service_connect_endpoint" {
-  value       = "app:${var.container_port}"
-  description = "Service Connect endpoint for the application"
-}
 
-output "load_balancer_dns" {
-  value       = aws_lb.main.dns_name
-  description = "Load balancer DNS name"
-}
-
-output "cluster_name" {
-  value       = aws_ecs_cluster.main.name
-  description = "ECS cluster name"
-}
-
-output "service_name" {
-  value       = aws_ecs_service.app.name
-  description = "ECS service name"
-}
-
-output "blue_target_group_arn" {
-  value       = aws_lb_target_group.blue.arn
-  description = "Blue target group ARN"
-}
-
-output "green_target_group_arn" {
-  value       = aws_lb_target_group.green.arn
-  description = "Green target group ARN"
-}
-
-output "listener_arn" {
-  value       = aws_lb_listener.main.arn
-  description = "ALB listener ARN"
-}
 
