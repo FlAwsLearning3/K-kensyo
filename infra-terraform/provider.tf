@@ -11,4 +11,5 @@ terraform {
 
 provider "aws" {
   region = var.region
+  # Cloud9では自動的に認証情報が設定される
 }
