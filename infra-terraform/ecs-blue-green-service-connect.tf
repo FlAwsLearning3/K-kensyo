@@ -49,10 +49,10 @@ resource "aws_ecs_task_definition" "frontend" {
   container_definitions = jsonencode([
     {
       name  = "frontend"
-      image = "nginx:latest"
+      image = "python:3.9-slim"
       command = [
-        "sh", "-c",
-        "echo 'server { listen 80; location / { return 200 \"Frontend v2.0 - Blue-Green Deploy Test\"; add_header Content-Type text/plain; } location /api { proxy_pass http://backend:8080; } }' > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+        "python", "-c",
+        "import http.server, socketserver, urllib.request; class Handler(http.server.SimpleHTTPRequestHandler): def do_GET(self): if self.path == '/': self.send_response(200); self.send_header('Content-type', 'text/plain'); self.end_headers(); self.wfile.write(b'Frontend v2.0 - Blue-Green Deploy Test'); elif self.path == '/api': try: with urllib.request.urlopen('http://backend:8080') as r: self.send_response(200); self.send_header('Content-type', 'text/plain'); self.end_headers(); self.wfile.write(r.read()); except: self.send_response(502); self.end_headers(); else: self.send_response(404); self.end_headers(); httpd = socketserver.TCPServer(('', 80), Handler); httpd.serve_forever()"
       ]
       portMappings = [
         {
@@ -91,10 +91,10 @@ resource "aws_ecs_task_definition" "backend" {
   container_definitions = jsonencode([
     {
       name  = "backend"
-      image = "nginx:latest"
+      image = "python:3.9-slim"
       command = [
-        "sh", "-c",
-        "echo 'server { listen 8080; location / { return 200 \"Backend Blue v1.0 - Service Connect\"; add_header Content-Type text/plain; } }' > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+        "python", "-c",
+        "import http.server, socketserver; class Handler(http.server.SimpleHTTPRequestHandler): def do_GET(self): self.send_response(200); self.send_header('Content-type', 'text/plain'); self.end_headers(); self.wfile.write(b'Backend Blue v1.0 - Service Connect'); httpd = socketserver.TCPServer(('', 8080), Handler); httpd.serve_forever()"
       ]
       portMappings = [
         {
@@ -199,7 +199,6 @@ resource "aws_ecs_service" "frontend" {
   task_definition     = aws_ecs_task_definition.frontend.arn
   desired_count       = 1
   launch_type         = "FARGATE"
-  force_new_deployment = true
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
