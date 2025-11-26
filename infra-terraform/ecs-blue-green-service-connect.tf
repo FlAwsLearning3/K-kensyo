@@ -189,7 +189,7 @@ resource "aws_ecs_service" "frontend" {
   name                = "${var.app_name}-frontend"
   cluster             = aws_ecs_cluster.frontend.id
   task_definition     = aws_ecs_task_definition.frontend.arn
-  desired_count       = var.desired_count
+  desired_count       = 0
   launch_type         = "FARGATE"
   force_new_deployment = true
 
@@ -211,7 +211,7 @@ resource "aws_ecs_service" "frontend" {
   }
 
   lifecycle {
-    ignore_changes = [task_definition, load_balancer]
+    ignore_changes = [task_definition]
   }
 
   depends_on = [
