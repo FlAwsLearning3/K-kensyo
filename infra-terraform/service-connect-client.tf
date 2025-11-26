@@ -49,7 +49,7 @@ resource "aws_cloudwatch_log_group" "client" {
 resource "aws_ecs_service" "client" {
   count           = var.enable_client ? 1 : 0
   name            = "${var.app_name}-client"
-  cluster         = aws_ecs_cluster.main.id
+  cluster         = aws_ecs_cluster.frontend.id
   task_definition = aws_ecs_task_definition.client.arn
   desired_count   = 1
   launch_type     = "FARGATE"

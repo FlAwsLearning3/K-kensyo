@@ -1,12 +1,22 @@
 # ECS関連
-output "cluster_name" {
-  description = "ECS cluster name"
-  value       = aws_ecs_cluster.main.name
+output "frontend_cluster_name" {
+  description = "Frontend ECS cluster name"
+  value       = aws_ecs_cluster.frontend.name
 }
 
-output "service_name" {
-  description = "ECS service name"
-  value       = aws_ecs_service.app.name
+output "backend_cluster_name" {
+  description = "Backend ECS cluster name"
+  value       = aws_ecs_cluster.backend.name
+}
+
+output "frontend_service_name" {
+  description = "Frontend ECS service name"
+  value       = aws_ecs_service.frontend.name
+}
+
+output "backend_service_name" {
+  description = "Backend ECS service name"
+  value       = aws_ecs_service.backend.name
 }
 
 output "service_connect_endpoint" {
