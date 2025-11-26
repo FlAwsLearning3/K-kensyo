@@ -16,7 +16,7 @@ output "frontend_service_name" {
 
 output "backend_service_name" {
   description = "Backend ECS service name"
-  value       = aws_ecs_service.backend.name
+  value       = aws_ecs_service.backend_blue.name
 }
 
 output "service_connect_endpoint" {
