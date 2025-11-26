@@ -49,10 +49,16 @@ resource "aws_ecs_task_definition" "frontend" {
   container_definitions = jsonencode([
     {
       name  = "frontend"
-      image = "python:3.9-slim"
+      image = "httpd:alpine"
+      environment = [
+        {
+          name  = "HTTPD_PREFIX"
+          value = "/usr/local/apache2"
+        }
+      ]
       command = [
-        "python", "-c",
-        "from http.server import HTTPServer, BaseHTTPRequestHandler; import urllib.request; class H(BaseHTTPRequestHandler): def do_GET(self): if self.path=='/': self.send_response(200); self.send_header('Content-type','text/plain'); self.end_headers(); self.wfile.write(b'Frontend v2.0 - Blue-Green Deploy Test'); elif self.path=='/api': try: req=urllib.request.urlopen('http://backend:8080'); self.send_response(200); self.send_header('Content-type','text/plain'); self.end_headers(); self.wfile.write(req.read()); except: self.send_response(502); self.end_headers(); else: self.send_response(404); self.end_headers(); HTTPServer(('',80),H).serve_forever()"
+        "sh", "-c",
+        "echo 'Frontend v2.0 - Blue-Green Deploy Test' > /usr/local/apache2/htdocs/index.html && httpd-foreground"
       ]
       portMappings = [
         {
@@ -91,10 +97,16 @@ resource "aws_ecs_task_definition" "backend" {
   container_definitions = jsonencode([
     {
       name  = "backend"
-      image = "python:3.9-slim"
+      image = "python:3.9-alpine"
       command = [
-        "python", "-c",
-        "from http.server import HTTPServer, BaseHTTPRequestHandler; class H(BaseHTTPRequestHandler): def do_GET(self): self.send_response(200); self.send_header('Content-type','text/plain'); self.end_headers(); self.wfile.write(b'Backend Blue v1.0 - Service Connect'); HTTPServer(('',8080),H).serve_forever()"
+        "python", "-m", "http.server", "8080", "--bind", "0.0.0.0"
+      ]
+      workingDirectory = "/tmp"
+      environment = [
+        {
+          name  = "PYTHONUNBUFFERED"
+          value = "1"
+        }
       ]
       portMappings = [
         {
