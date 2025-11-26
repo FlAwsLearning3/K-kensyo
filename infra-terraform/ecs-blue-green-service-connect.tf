@@ -199,11 +199,11 @@ resource "aws_ecs_service" "frontend" {
     assign_public_ip = true
   }
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.blue.arn
-    container_name   = "frontend"
-    container_port   = 80
-  }
+  # load_balancer {
+  #   target_group_arn = aws_lb_target_group.blue.arn
+  #   container_name   = "frontend"
+  #   container_port   = 80
+  # }
 
   service_connect_configuration {
     enabled   = true
