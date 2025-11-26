@@ -189,7 +189,7 @@ resource "aws_ecs_service" "frontend" {
   name                = "${var.app_name}-frontend"
   cluster             = aws_ecs_cluster.frontend.id
   task_definition     = aws_ecs_task_definition.frontend.arn
-  desired_count       = var.desired_count
+  desired_count       = 1
   launch_type         = "FARGATE"
   force_new_deployment = true
 
@@ -226,7 +226,7 @@ resource "aws_ecs_service" "backend" {
   name            = "${var.app_name}-backend"
   cluster         = aws_ecs_cluster.backend.id
   task_definition = aws_ecs_task_definition.backend.arn
-  desired_count   = var.desired_count
+  desired_count   = 1
   launch_type     = "FARGATE"
 
   network_configuration {
