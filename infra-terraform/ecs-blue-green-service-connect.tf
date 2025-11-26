@@ -254,10 +254,6 @@ resource "aws_ecs_service" "backend_blue" {
       }
     }
   }
-
-  lifecycle {
-    ignore_changes = [task_definition]
-  }
 }
 
 # Backend Green Service (Cluster B) - Initially stopped
