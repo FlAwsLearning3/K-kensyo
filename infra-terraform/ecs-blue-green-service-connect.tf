@@ -186,11 +186,12 @@ resource "aws_lb_listener" "main" {
 
 # Frontend Service (Cluster A)
 resource "aws_ecs_service" "frontend" {
-  name            = "${var.app_name}-frontend"
-  cluster         = aws_ecs_cluster.frontend.id
-  task_definition = aws_ecs_task_definition.frontend.arn
-  desired_count   = var.desired_count
-  launch_type     = "FARGATE"
+  name                = "${var.app_name}-frontend"
+  cluster             = aws_ecs_cluster.frontend.id
+  task_definition     = aws_ecs_task_definition.frontend.arn
+  desired_count       = var.desired_count
+  launch_type         = "FARGATE"
+  force_new_deployment = true
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
