@@ -232,6 +232,7 @@ resource "aws_ecs_service" "backend_blue" {
   task_definition = aws_ecs_task_definition.backend.arn
   desired_count   = 1
   launch_type     = "FARGATE"
+  force_new_deployment = true
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
