@@ -189,7 +189,7 @@ resource "aws_ecs_service" "frontend" {
   name                = "${var.app_name}-frontend"
   cluster             = aws_ecs_cluster.frontend.id
   task_definition     = aws_ecs_task_definition.frontend.arn
-  desired_count       = 0
+  desired_count       = var.desired_count
   launch_type         = "FARGATE"
   force_new_deployment = true
 
@@ -199,11 +199,11 @@ resource "aws_ecs_service" "frontend" {
     assign_public_ip = true
   }
 
-  # load_balancer {
-  #   target_group_arn = aws_lb_target_group.blue.arn
-  #   container_name   = "frontend"
-  #   container_port   = 80
-  # }
+  load_balancer {
+    target_group_arn = aws_lb_target_group.blue.arn
+    container_name   = "frontend"
+    container_port   = 80
+  }
 
   service_connect_configuration {
     enabled   = true
