@@ -52,7 +52,7 @@ resource "aws_ecs_task_definition" "frontend" {
       image = "python:3.9-slim"
       command = [
         "python", "-c",
-        "import http.server, socketserver, urllib.request; class Handler(http.server.SimpleHTTPRequestHandler): def do_GET(self): if self.path == '/': self.send_response(200); self.send_header('Content-type', 'text/plain'); self.end_headers(); self.wfile.write(b'Frontend v2.0 - Blue-Green Deploy Test'); elif self.path == '/api': try: with urllib.request.urlopen('http://backend:8080') as r: self.send_response(200); self.send_header('Content-type', 'text/plain'); self.end_headers(); self.wfile.write(r.read()); except: self.send_response(502); self.end_headers(); else: self.send_response(404); self.end_headers(); httpd = socketserver.TCPServer(('', 80), Handler); httpd.serve_forever()"
+        "from http.server import HTTPServer, BaseHTTPRequestHandler; import urllib.request; class H(BaseHTTPRequestHandler): def do_GET(self): if self.path=='/': self.send_response(200); self.send_header('Content-type','text/plain'); self.end_headers(); self.wfile.write(b'Frontend v2.0 - Blue-Green Deploy Test'); elif self.path=='/api': try: req=urllib.request.urlopen('http://backend:8080'); self.send_response(200); self.send_header('Content-type','text/plain'); self.end_headers(); self.wfile.write(req.read()); except: self.send_response(502); self.end_headers(); else: self.send_response(404); self.end_headers(); HTTPServer(('',80),H).serve_forever()"
       ]
       portMappings = [
         {
@@ -94,7 +94,7 @@ resource "aws_ecs_task_definition" "backend" {
       image = "python:3.9-slim"
       command = [
         "python", "-c",
-        "import http.server, socketserver; class Handler(http.server.SimpleHTTPRequestHandler): def do_GET(self): self.send_response(200); self.send_header('Content-type', 'text/plain'); self.end_headers(); self.wfile.write(b'Backend Blue v1.0 - Service Connect'); httpd = socketserver.TCPServer(('', 8080), Handler); httpd.serve_forever()"
+        "from http.server import HTTPServer, BaseHTTPRequestHandler; class H(BaseHTTPRequestHandler): def do_GET(self): self.send_response(200); self.send_header('Content-type','text/plain'); self.end_headers(); self.wfile.write(b'Backend Blue v1.0 - Service Connect'); HTTPServer(('',8080),H).serve_forever()"
       ]
       portMappings = [
         {
