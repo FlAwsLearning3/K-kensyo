@@ -50,6 +50,10 @@ resource "aws_ecs_task_definition" "frontend" {
     {
       name  = "frontend"
       image = "nginx:latest"
+      command = [
+        "sh", "-c",
+        "echo 'server { listen 80; location / { return 200 \"Frontend v2.0 - Blue-Green Deploy Test\"; add_header Content-Type text/plain; } location /api { proxy_pass http://backend:8080; } }' > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+      ]
       portMappings = [
         {
           name          = "frontend-port"
