@@ -84,57 +84,7 @@ resource "aws_codebuild_project" "build" {
   }
 }
 
-# CodeBuild Project for Deployment
-resource "aws_codebuild_project" "deploy" {
-  name          = "${var.app_name}-deploy"
-  service_role  = aws_iam_role.codebuild_deploy_role.arn
 
-  artifacts {
-    type = "CODEPIPELINE"
-  }
-
-  environment {
-    compute_type                = "BUILD_GENERAL1_SMALL"
-    image                      = "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
-    type                       = "LINUX_CONTAINER"
-    image_pull_credentials_type = "CODEBUILD"
-
-    environment_variable {
-      name  = "AWS_DEFAULT_REGION"
-      value = var.region
-    }
-
-    environment_variable {
-      name  = "CLUSTER_NAME"
-      value = aws_ecs_cluster.main.name
-    }
-
-    environment_variable {
-      name  = "SERVICE_NAME"
-      value = aws_ecs_service.app.name
-    }
-
-    environment_variable {
-      name  = "BLUE_TARGET_GROUP_ARN"
-      value = aws_lb_target_group.blue.arn
-    }
-
-    environment_variable {
-      name  = "GREEN_TARGET_GROUP_ARN"
-      value = aws_lb_target_group.green.arn
-    }
-
-    environment_variable {
-      name  = "LISTENER_ARN"
-      value = aws_lb_listener.main.arn
-    }
-  }
-
-  source {
-    type = "CODEPIPELINE"
-    buildspec = "deployspec.yml"
-  }
-}
 
 # CodePipeline
 resource "aws_codepipeline" "main" {
@@ -187,15 +137,14 @@ resource "aws_codepipeline" "main" {
     name = "Deploy"
 
     action {
-      name            = "Deploy"
-      category        = "Build"
-      owner           = "AWS"
-      provider        = "CodeBuild"
-      input_artifacts = ["build_output"]
-      version         = "1"
+      name     = "Deploy"
+      category = "Invoke"
+      owner    = "AWS"
+      provider = "Lambda"
+      version  = "1"
 
       configuration = {
-        ProjectName = aws_codebuild_project.deploy.name
+        FunctionName = aws_lambda_function.blue_green_controller.function_name
       }
     }
   }
@@ -270,87 +219,7 @@ resource "aws_iam_role_policy" "codebuild_policy" {
   })
 }
 
-# IAM Role for CodeBuild Deploy
-resource "aws_iam_role" "codebuild_deploy_role" {
-  name = "${var.app_name}-codebuild-deploy-role"
 
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "codebuild.amazonaws.com"
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "codebuild_deploy_policy" {
-  role = aws_iam_role.codebuild_deploy_role.name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "arn:aws:logs:*:*:*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:GetObjectVersion"
-        ]
-        Resource = "${aws_s3_bucket.pipeline_artifacts.arn}/*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecs:DescribeServices",
-          "ecs:DescribeTaskDefinition",
-          "ecs:RegisterTaskDefinition",
-          "ecs:UpdateService",
-          "ecs:ListTasks",
-          "ecs:DescribeTasks"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "elasticloadbalancing:DescribeListeners",
-          "elasticloadbalancing:DescribeTargetHealth",
-          "elasticloadbalancing:ModifyListener",
-          "elasticloadbalancing:RegisterTargets",
-          "elasticloadbalancing:DeregisterTargets"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ec2:DescribeNetworkInterfaces"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "iam:PassRole"
-        ]
-        Resource = aws_iam_role.ecs_execution_role.arn
-      }
-    ]
-  })
-}
 
 # IAM Role for CodePipeline
 resource "aws_iam_role" "codepipeline_role" {
@@ -395,10 +264,7 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           "codebuild:BatchGetBuilds",
           "codebuild:StartBuild"
         ]
-        Resource = [
-          aws_codebuild_project.build.arn,
-          aws_codebuild_project.deploy.arn
-        ]
+        Resource = aws_codebuild_project.build.arn
       },
       {
         Effect = "Allow"
@@ -406,6 +272,13 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           "codestar-connections:UseConnection"
         ]
         Resource = aws_codestarconnections_connection.github.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "lambda:InvokeFunction"
+        ]
+        Resource = aws_lambda_function.blue_green_controller.arn
       }
     ]
   })

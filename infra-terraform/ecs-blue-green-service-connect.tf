@@ -12,9 +12,18 @@
 # CodeDeployは使用せず、ECSネイティブ機能でブルーグリーンデプロイを実現
 # =============================================================================
 
-# ECS Cluster
-resource "aws_ecs_cluster" "main" {
-  name = "${var.app_name}-cluster"
+# ECS Cluster A (Frontend)
+resource "aws_ecs_cluster" "frontend" {
+  name = "${var.app_name}-frontend-cluster"
+
+  service_connect_defaults {
+    namespace = aws_service_discovery_http_namespace.main.arn
+  }
+}
+
+# ECS Cluster B (Backend)
+resource "aws_ecs_cluster" "backend" {
+  name = "${var.app_name}-backend-cluster"
 
   service_connect_defaults {
     namespace = aws_service_discovery_http_namespace.main.arn
@@ -28,9 +37,9 @@ resource "aws_service_discovery_http_namespace" "main" {
 
 
 
-# Task Definition
-resource "aws_ecs_task_definition" "app" {
-  family                   = var.app_name
+# Frontend Task Definition
+resource "aws_ecs_task_definition" "frontend" {
+  family                   = "${var.app_name}-frontend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = var.cpu
@@ -39,11 +48,49 @@ resource "aws_ecs_task_definition" "app" {
 
   container_definitions = jsonencode([
     {
-      name  = "app"
+      name  = "frontend"
+      image = "nginx:latest"
+      portMappings = [
+        {
+          name          = "frontend-port"
+          containerPort = 80
+          protocol      = "tcp"
+        }
+      ]
+      environment = [
+        {
+          name  = "BACKEND_URL"
+          value = "http://backend:8080"
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.frontend.name
+          "awslogs-region"        = var.region
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+    }
+  ])
+}
+
+# Backend Task Definition
+resource "aws_ecs_task_definition" "backend" {
+  family                   = "${var.app_name}-backend"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.cpu
+  memory                   = var.memory
+  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name  = "backend"
       image = var.container_image
       portMappings = [
         {
-          name          = "app-port"
+          name          = "backend-port"
           containerPort = var.container_port
           protocol      = "tcp"
         }
@@ -51,7 +98,7 @@ resource "aws_ecs_task_definition" "app" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.app.name
+          "awslogs-group"         = aws_cloudwatch_log_group.backend.name
           "awslogs-region"        = var.region
           "awslogs-stream-prefix" = "ecs"
         }
@@ -129,13 +176,22 @@ resource "aws_lb_listener" "main" {
   }
 }
 
-# ECS Service with Service Connect and ECS Native Blue/Green Deployment
-resource "aws_ecs_service" "app" {
-  name            = var.app_name
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.app.arn
+# Frontend Service (Cluster A)
+resource "aws_ecs_service" "frontend" {
+  name            = "${var.app_name}-frontend"
+  cluster         = aws_ecs_cluster.frontend.id
+  task_definition = aws_ecs_task_definition.frontend.arn
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
+
+  deployment_configuration {
+    deployment_circuit_breaker {
+      enable   = true
+      rollback = true
+    }
+    maximum_percent         = 200
+    minimum_healthy_percent = 100
+  }
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -145,8 +201,43 @@ resource "aws_ecs_service" "app" {
 
   load_balancer {
     target_group_arn = aws_lb_target_group.blue.arn
-    container_name   = "app"
-    container_port   = var.container_port
+    container_name   = "frontend"
+    container_port   = 80
+  }
+
+  service_connect_configuration {
+    enabled   = true
+    namespace = aws_service_discovery_http_namespace.main.arn
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition, load_balancer]
+  }
+
+  depends_on = [aws_lb_listener.main]
+}
+
+# Backend Service (Cluster B) with Service Connect
+resource "aws_ecs_service" "backend" {
+  name            = "${var.app_name}-backend"
+  cluster         = aws_ecs_cluster.backend.id
+  task_definition = aws_ecs_task_definition.backend.arn
+  desired_count   = var.desired_count
+  launch_type     = "FARGATE"
+
+  deployment_configuration {
+    deployment_circuit_breaker {
+      enable   = true
+      rollback = true
+    }
+    maximum_percent         = 200
+    minimum_healthy_percent = 100
+  }
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs_tasks.id]
+    assign_public_ip = true
   }
 
   service_connect_configuration {
@@ -154,28 +245,29 @@ resource "aws_ecs_service" "app" {
     namespace = aws_service_discovery_http_namespace.main.arn
 
     service {
-      port_name      = "app-port"
-      discovery_name = "app"
+      port_name      = "backend-port"
+      discovery_name = "backend"
       
       client_alias {
         port     = var.container_port
-        dns_name = "app"
+        dns_name = "backend"
       }
     }
   }
 
-
-
   lifecycle {
     ignore_changes = [task_definition]
   }
-
-  depends_on = [aws_lb_listener.main]
 }
 
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "app" {
-  name              = "/ecs/${var.app_name}"
+# CloudWatch Log Groups
+resource "aws_cloudwatch_log_group" "frontend" {
+  name              = "/ecs/${var.app_name}-frontend"
+  retention_in_days = 7
+}
+
+resource "aws_cloudwatch_log_group" "backend" {
+  name              = "/ecs/${var.app_name}-backend"
   retention_in_days = 7
 }
 
