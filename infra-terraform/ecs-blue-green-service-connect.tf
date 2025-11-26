@@ -49,16 +49,10 @@ resource "aws_ecs_task_definition" "frontend" {
   container_definitions = jsonencode([
     {
       name  = "frontend"
-      image = "httpd:alpine"
-      environment = [
-        {
-          name  = "HTTPD_PREFIX"
-          value = "/usr/local/apache2"
-        }
-      ]
+      image = "nginx:alpine"
       command = [
         "sh", "-c",
-        "echo 'Frontend v2.0 - Blue-Green Deploy Test' > /usr/local/apache2/htdocs/index.html && httpd-foreground"
+        "echo 'Frontend v2.0 - Blue-Green Deploy Test' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
       ]
       portMappings = [
         {
@@ -97,16 +91,10 @@ resource "aws_ecs_task_definition" "backend" {
   container_definitions = jsonencode([
     {
       name  = "backend"
-      image = "python:3.9-alpine"
+      image = "nginx:alpine"
       command = [
-        "python", "-m", "http.server", "8080", "--bind", "0.0.0.0"
-      ]
-      workingDirectory = "/tmp"
-      environment = [
-        {
-          name  = "PYTHONUNBUFFERED"
-          value = "1"
-        }
+        "sh", "-c",
+        "mkdir -p /usr/share/nginx/html && echo 'Backend Blue v1.0 - Service Connect' > /usr/share/nginx/html/index.html && sed -i 's/listen       80/listen       8080/' /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
       ]
       portMappings = [
         {
