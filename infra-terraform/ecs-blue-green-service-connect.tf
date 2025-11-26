@@ -91,11 +91,15 @@ resource "aws_ecs_task_definition" "backend" {
   container_definitions = jsonencode([
     {
       name  = "backend"
-      image = var.container_image
+      image = "nginx:latest"
+      command = [
+        "sh", "-c",
+        "echo 'server { listen 8080; location / { return 200 \"Backend Blue v1.0 - Service Connect\"; add_header Content-Type text/plain; } }' > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+      ]
       portMappings = [
         {
           name          = "backend-port"
-          containerPort = var.container_port
+          containerPort = 8080
           protocol      = "tcp"
         }
       ]
@@ -224,9 +228,9 @@ resource "aws_ecs_service" "frontend" {
   ]
 }
 
-# Backend Service (Cluster B) with Service Connect
-resource "aws_ecs_service" "backend" {
-  name            = "${var.app_name}-backend"
+# Backend Blue Service (Cluster B) with Service Connect
+resource "aws_ecs_service" "backend_blue" {
+  name            = "${var.app_name}-backend-blue"
   cluster         = aws_ecs_cluster.backend.id
   task_definition = aws_ecs_task_definition.backend.arn
   desired_count   = 1
@@ -247,8 +251,42 @@ resource "aws_ecs_service" "backend" {
       discovery_name = "backend"
       
       client_alias {
-        port     = var.container_port
+        port     = 8080
         dns_name = "backend"
+      }
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+}
+
+# Backend Green Service (Cluster B) - Initially stopped
+resource "aws_ecs_service" "backend_green" {
+  name            = "${var.app_name}-backend-green"
+  cluster         = aws_ecs_cluster.backend.id
+  task_definition = aws_ecs_task_definition.backend.arn
+  desired_count   = 0
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs_tasks.id]
+    assign_public_ip = true
+  }
+
+  service_connect_configuration {
+    enabled   = true
+    namespace = aws_service_discovery_http_namespace.main.arn
+
+    service {
+      port_name      = "backend-port"
+      discovery_name = "backend-green"
+      
+      client_alias {
+        port     = 8080
+        dns_name = "backend-green"
       }
     }
   }
