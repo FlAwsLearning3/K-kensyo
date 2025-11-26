@@ -121,7 +121,7 @@ resource "aws_lb" "main" {
 # Target Group Blue
 resource "aws_lb_target_group" "blue" {
   name        = "${var.app_name}-blue"
-  port        = var.container_port
+  port        = 80
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
   target_type = "ip"
@@ -142,7 +142,7 @@ resource "aws_lb_target_group" "blue" {
 # Target Group Green
 resource "aws_lb_target_group" "green" {
   name        = "${var.app_name}-green"
-  port        = var.container_port
+  port        = 80
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
   target_type = "ip"
