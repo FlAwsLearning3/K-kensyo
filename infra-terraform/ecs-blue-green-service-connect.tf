@@ -137,6 +137,10 @@ resource "aws_lb_target_group" "blue" {
     timeout             = 5
     unhealthy_threshold = 2
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Target Group Green
@@ -157,6 +161,10 @@ resource "aws_lb_target_group" "green" {
     protocol            = "HTTP"
     timeout             = 5
     unhealthy_threshold = 2
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
