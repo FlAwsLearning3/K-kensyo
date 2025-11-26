@@ -50,9 +50,10 @@ resource "aws_ecs_task_definition" "frontend" {
     {
       name  = "frontend"
       image = "nginx:alpine"
+      entryPoint = ["/bin/sh"]
       command = [
-        "sh", "-c",
-        "echo 'Frontend v2.0 - Blue-Green Deploy Test' > /usr/share/nginx/html/index.html && nginx -g 'daemon off;'"
+        "-c",
+        "echo 'Frontend v2.0 - Blue-Green Deploy Test' > /usr/share/nginx/html/index.html && echo 'server { listen 80; location / { root /usr/share/nginx/html; index index.html; } location /api { proxy_pass http://backend:8080/; } }' > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
       ]
       portMappings = [
         {
@@ -92,9 +93,10 @@ resource "aws_ecs_task_definition" "backend" {
     {
       name  = "backend"
       image = "nginx:alpine"
+      entryPoint = ["/bin/sh"]
       command = [
-        "sh", "-c",
-        "mkdir -p /usr/share/nginx/html && echo 'Backend Blue v1.0 - Service Connect' > /usr/share/nginx/html/index.html && sed -i 's/listen       80/listen       8080/' /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+        "-c",
+        "echo 'Backend Blue v1.0 - Service Connect' > /usr/share/nginx/html/index.html && sed -i 's/listen       80/listen       8080/' /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
       ]
       portMappings = [
         {
