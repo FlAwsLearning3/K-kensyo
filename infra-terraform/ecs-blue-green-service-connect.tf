@@ -213,7 +213,11 @@ resource "aws_ecs_service" "frontend" {
     ignore_changes = [task_definition, load_balancer]
   }
 
-  depends_on = [aws_lb_listener.main]
+  depends_on = [
+    aws_lb_listener.main,
+    aws_lb_target_group.blue,
+    aws_lb_target_group.green
+  ]
 }
 
 # Backend Service (Cluster B) with Service Connect
