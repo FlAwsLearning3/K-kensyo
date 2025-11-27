@@ -35,20 +35,6 @@ resource "aws_service_discovery_http_namespace" "main" {
   name = "${var.app_name}-namespace"
 }
 
-# Cloud Map Service for Backend
-resource "aws_service_discovery_service" "backend" {
-  name = "backend"
-
-  dns_config {
-    namespace_id = aws_service_discovery_http_namespace.main.id
-    
-    dns_records {
-      ttl  = 10
-      type = "A"
-    }
-  }
-}
-
 
 
 # Frontend Task Definition
