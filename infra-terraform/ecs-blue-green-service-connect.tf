@@ -278,15 +278,11 @@ resource "aws_ecs_service" "backend" {
   deployment_configuration {
     maximum_percent         = 200
     minimum_healthy_percent = 100
-    
-    deployment_circuit_breaker {
-      enable   = true
-      rollback = true
-    }
   }
   
-  deployment_controller {
-    type = "ECS"
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
   }
   
   network_configuration {
