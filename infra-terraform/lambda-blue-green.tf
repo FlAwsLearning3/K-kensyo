@@ -16,7 +16,7 @@ resource "aws_lambda_function" "blue_green_controller" {
   environment {
     variables = {
       CLUSTER_NAME           = aws_ecs_cluster.backend.name
-      SERVICE_NAME          = aws_ecs_service.backend_blue.name
+      SERVICE_NAME          = aws_ecs_service.backend.name
       BLUE_TARGET_GROUP_ARN = aws_lb_target_group.blue.arn
       GREEN_TARGET_GROUP_ARN = aws_lb_target_group.green.arn
       LISTENER_ARN          = aws_lb_listener.main.arn
