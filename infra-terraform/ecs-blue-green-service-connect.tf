@@ -277,11 +277,6 @@ resource "aws_ecs_service" "backend_blue" {
   force_new_deployment   = true
   enable_execute_command = true
   
-  deployment_configuration {
-    maximum_percent         = 200
-    minimum_healthy_percent = 100
-  }
-
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs_tasks.id]
