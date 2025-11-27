@@ -47,8 +47,6 @@ resource "aws_service_discovery_service" "backend" {
       type = "A"
     }
   }
-
-  health_check_grace_period_seconds = 30
 }
 
 
