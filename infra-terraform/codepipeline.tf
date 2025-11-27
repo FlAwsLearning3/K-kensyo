@@ -2,6 +2,8 @@
 # CodePipeline + CodeBuild for Blue-Green Deployment
 # =============================================================================
 
+data "aws_caller_identity" "current" {}
+
 # S3 Bucket for CodePipeline artifacts
 resource "aws_s3_bucket" "codepipeline_artifacts" {
   bucket        = "${var.app_name}-codepipeline-artifacts-${random_string.bucket_suffix.result}"
@@ -80,6 +82,22 @@ resource "aws_codebuild_project" "blue_green_deploy" {
     image                      = "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
     type                       = "LINUX_CONTAINER"
     image_pull_credentials_type = "CODEBUILD"
+    privileged_mode            = true
+
+    environment_variable {
+      name  = "AWS_DEFAULT_REGION"
+      value = var.region
+    }
+
+    environment_variable {
+      name  = "AWS_ACCOUNT_ID"
+      value = data.aws_caller_identity.current.account_id
+    }
+
+    environment_variable {
+      name  = "IMAGE_REPO_NAME"
+      value = aws_ecr_repository.app.name
+    }
   }
 
   source {
@@ -104,14 +122,16 @@ resource "aws_codepipeline" "blue_green_pipeline" {
     action {
       name             = "Source"
       category         = "Source"
-      owner            = "AWS"
-      provider         = "S3"
+      owner            = "ThirdParty"
+      provider         = "GitHub"
       version          = "1"
       output_artifacts = ["source_output"]
 
       configuration = {
-        S3Bucket    = aws_s3_bucket.codepipeline_artifacts.bucket
-        S3ObjectKey = "source.zip"
+        Owner      = var.github_owner
+        Repo       = var.github_repo
+        Branch     = var.github_branch
+        OAuthToken = var.github_token
       }
     }
   }
@@ -207,6 +227,16 @@ resource "aws_iam_role_policy" "codebuild_policy" {
         Effect = "Allow"
         Action = [
           "elbv2:DescribeLoadBalancers"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:GetAuthorizationToken"
         ]
         Resource = "*"
       }

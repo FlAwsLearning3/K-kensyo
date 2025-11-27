@@ -98,7 +98,7 @@ resource "aws_ecs_task_definition" "backend_blue" {
       entryPoint = ["/bin/sh"]
       command = [
         "-c",
-        "rm -f /etc/nginx/conf.d/default.conf && echo 'server { listen 8080; location / { add_header Content-Type text/plain; return 200 \"Backend Blue v1.0 - Service Connect\"; } }' > /etc/nginx/conf.d/backend.conf && nginx -g 'daemon off;'"
+        "echo 'server { listen 8080; location / { add_header Content-Type text/plain; return 200 \"Backend BLUE - Service Connect\"; } }' > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
       ]
       portMappings = [
         {
@@ -136,7 +136,7 @@ resource "aws_ecs_task_definition" "backend_green" {
       entryPoint = ["/bin/sh"]
       command = [
         "-c",
-        "rm -f /etc/nginx/conf.d/* && echo 'server { listen 8080; location / { add_header Content-Type text/plain; return 200 \"Backend Green v2.0 - Service Connect\"; } }' > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
+        "echo 'server { listen 8080; location / { add_header Content-Type text/plain; return 200 \"Backend GREEN - Service Connect\"; } }' > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
       ]
       portMappings = [
         {

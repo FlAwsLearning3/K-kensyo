@@ -3,132 +3,69 @@ version: 0.2
 phases:
   pre_build:
     commands:
-      - echo "Starting Blue-Green deployment process..."
-      - echo "Checking current active environment..."
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - IMAGE_TAG=${CODEBUILD_RESOLVED_SOURCE_VERSION:0:7}
+      - echo Getting current active backend...
+      - ACTIVE_BACKEND=$(aws ssm get-parameter --name "/blue-green-app/active-backend" --query "Parameter.Value" --output text)
+      - echo Current active backend is $ACTIVE_BACKEND
       
-      # 現在のアクティブ環境を確認（初回はblueをデフォルト）
-      - |
-        CURRENT_ACTIVE=$(aws ssm get-parameter --name "/blue-green-app/active-backend" --query "Parameter.Value" --output text 2>/dev/null || echo "blue")
-        echo "Current active environment: $CURRENT_ACTIVE"
-      
-      # 次のデプロイ先を決定
-      - |
-        if [ "$CURRENT_ACTIVE" = "blue" ]; then
-          DEPLOY_TARGET="green"
-          OLD_ENV="blue"
-        else
-          DEPLOY_TARGET="blue"
-          OLD_ENV="green"
-        fi
-        echo "Deploy target: $DEPLOY_TARGET"
-        echo "Old environment: $OLD_ENV"
-
   build:
     commands:
-      - echo "Phase 1: Starting $DEPLOY_TARGET service..."
+      - echo Build started on `date`
+      - echo Building the Docker image...
+      - docker build -t $IMAGE_REPO_NAME:$IMAGE_TAG .
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $REPOSITORY_URI:$IMAGE_TAG
+      - docker tag $IMAGE_REPO_NAME:$IMAGE_TAG $REPOSITORY_URI:latest
       
-      # 1. 新環境（Green/Blue）を起動
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image...
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - docker push $REPOSITORY_URI:latest
+      - echo Determining target environment for deployment...
+      - |
+        if [ "$ACTIVE_BACKEND" = "blue" ]; then
+          TARGET_BACKEND="green"
+          TARGET_SERVICE="blue-green-app-backend-green"
+        else
+          TARGET_BACKEND="blue"
+          TARGET_SERVICE="blue-green-app-backend-blue"
+        fi
+      - echo Deploying to $TARGET_BACKEND environment
+      - echo Updating ECS service $TARGET_SERVICE...
       - |
         aws ecs update-service \
           --cluster blue-green-app-backend-cluster \
-          --service blue-green-app-backend-$DEPLOY_TARGET \
-          --desired-count 1
-      
-      # 2. ヘルスチェック待機
-      - echo "Phase 2: Waiting for $DEPLOY_TARGET to be healthy..."
+          --service $TARGET_SERVICE \
+          --desired-count 1 \
+          --force-new-deployment
+      - echo Waiting for service to become stable...
       - |
         aws ecs wait services-stable \
           --cluster blue-green-app-backend-cluster \
-          --services blue-green-app-backend-$DEPLOY_TARGET \
-          --cli-read-timeout 600 \
-          --cli-connect-timeout 60
-
-  post_build:
-    commands:
-      - echo "Phase 3: Switching Service Connect discovery names..."
-      
-      # 3. Service Connect切り替え（discovery_name変更）
-      - |
-        # 旧環境のdiscovery_nameを変更
-        aws ecs update-service \
-          --cluster blue-green-app-backend-cluster \
-          --service blue-green-app-backend-$OLD_ENV \
-          --service-connect-configuration '{
-            "enabled": true,
-            "namespace": "'$(aws servicediscovery list-namespaces --filters Name=TYPE,Values=HTTP --query "Namespaces[?Name=='\''blue-green-app-namespace'\''].Arn" --output text)'",
-            "services": [{
-              "portName": "backend-port",
-              "discoveryName": "backend-'$OLD_ENV'",
-              "clientAliases": [{
-                "port": 8080,
-                "dnsName": "backend-'$OLD_ENV'"
-              }]
-            }]
-          }'
-      
-      - sleep 10
-      
-      # 新環境のdiscovery_nameを"backend"に変更
-      - |
-        aws ecs update-service \
-          --cluster blue-green-app-backend-cluster \
-          --service blue-green-app-backend-$DEPLOY_TARGET \
-          --service-connect-configuration '{
-            "enabled": true,
-            "namespace": "'$(aws servicediscovery list-namespaces --filters Name=TYPE,Values=HTTP --query "Namespaces[?Name=='\''blue-green-app-namespace'\''].Arn" --output text)'",
-            "services": [{
-              "portName": "backend-port",
-              "discoveryName": "backend",
-              "clientAliases": [{
-                "port": 8080,
-                "dnsName": "backend"
-              }]
-            }]
-          }'
-      
-      - echo "Phase 4: Waiting for Service Connect switch to complete..."
-      - sleep 30
-      
-      # 4. 動作確認
-      - echo "Phase 5: Testing new deployment..."
-      - |
-        ALB_URL=$(aws elbv2 describe-load-balancers --names blue-green-app-alb --query "LoadBalancers[0].DNSName" --output text)
-        echo "Testing: http://$ALB_URL/api"
-        
-        # 最大5回リトライ
-        for i in {1..5}; do
-          if curl -f "http://$ALB_URL/api"; then
-            echo "✅ Deployment test successful!"
-            break
-          else
-            echo "❌ Test failed, retrying... ($i/5)"
-            sleep 10
-          fi
-          
-          if [ $i -eq 5 ]; then
-            echo "❌ Deployment test failed after 5 attempts"
-            exit 1
-          fi
-        done
-      
-      # 5. 旧環境停止
-      - echo "Phase 6: Stopping old environment ($OLD_ENV)..."
-      - |
-        aws ecs update-service \
-          --cluster blue-green-app-backend-cluster \
-          --service blue-green-app-backend-$OLD_ENV \
-          --desired-count 0
-      
-      # 6. アクティブ環境をSSMに保存
-      - echo "Phase 7: Updating active environment in SSM..."
+          --services $TARGET_SERVICE
+      - echo Switching traffic to $TARGET_BACKEND...
       - |
         aws ssm put-parameter \
           --name "/blue-green-app/active-backend" \
-          --value "$DEPLOY_TARGET" \
+          --value $TARGET_BACKEND \
           --overwrite
-      
-      - echo "🎉 Blue-Green deployment completed successfully!"
-      - echo "Active environment: $DEPLOY_TARGET"
+      - echo Scaling down old environment...
+      - |
+        if [ "$TARGET_BACKEND" = "green" ]; then
+          OLD_SERVICE="blue-green-app-backend-blue"
+        else
+          OLD_SERVICE="blue-green-app-backend-green"
+        fi
+      - |
+        aws ecs update-service \
+          --cluster blue-green-app-backend-cluster \
+          --service $OLD_SERVICE \
+          --desired-count 0
+      - echo Blue-Green deployment completed successfully!
 
 artifacts:
   files:
