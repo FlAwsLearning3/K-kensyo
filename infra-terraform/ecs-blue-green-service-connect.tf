@@ -267,44 +267,7 @@ resource "aws_ecs_service" "frontend" {
   ]
 }
 
-# Backend Service with Blue-Green Deployment
-resource "aws_ecs_service" "backend" {
-  name            = "${var.app_name}-backend"
-  cluster         = aws_ecs_cluster.backend.id
-  task_definition = aws_ecs_task_definition.backend_blue.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-  
-  deployment_configuration {
-    deployment_circuit_breaker {
-      enable   = true
-      rollback = true
-    }
-    maximum_percent         = 200
-    minimum_healthy_percent = 100
-  }
-  
-  network_configuration {
-    subnets          = aws_subnet.public[*].id
-    security_groups  = [aws_security_group.ecs_tasks.id]
-    assign_public_ip = true
-  }
 
-  service_connect_configuration {
-    enabled   = true
-    namespace = aws_service_discovery_http_namespace.main.arn
-
-    service {
-      port_name      = "backend-port"
-      discovery_name = "backend"
-      
-      client_alias {
-        port     = 8080
-        dns_name = "backend"
-      }
-    }
-  }
-}
 
 
 
