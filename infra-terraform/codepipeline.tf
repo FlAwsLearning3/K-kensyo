@@ -47,6 +47,10 @@ resource "aws_s3_bucket_lifecycle_configuration" "codepipeline_artifacts" {
     id     = "delete_old_versions"
     status = "Enabled"
 
+    filter {
+      prefix = ""
+    }
+
     expiration {
       days = 30
     }
