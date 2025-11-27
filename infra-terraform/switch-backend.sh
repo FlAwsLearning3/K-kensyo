@@ -19,7 +19,7 @@ else
     OLD_SERVICE="blue-green-app-backend-green"
 fi
 
-echo "切り替え先: $TARGET"
+echo "デプロイ先: $TARGET"
 
 # 新環境を起動
 echo "新環境 ($TARGET) を起動中..."

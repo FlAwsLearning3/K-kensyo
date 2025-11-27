@@ -319,11 +319,11 @@ resource "aws_ecs_service" "backend_green" {
 
     service {
       port_name      = "backend-port"
-      discovery_name = "backend-green"
+      discovery_name = "backend"
       
       client_alias {
         port     = 8080
-        dns_name = "backend-green"
+        dns_name = "backend"
       }
     }
   }
