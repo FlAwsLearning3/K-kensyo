@@ -31,6 +31,36 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "codepipeline_arti
   }
 }
 
+resource "aws_s3_bucket_public_access_block" "codepipeline_artifacts" {
+  bucket = aws_s3_bucket.codepipeline_artifacts.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "codepipeline_artifacts" {
+  bucket = aws_s3_bucket.codepipeline_artifacts.id
+
+  rule {
+    id     = "delete_old_versions"
+    status = "Enabled"
+
+    expiration {
+      days = 30
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+}
+
 # CodeBuild Project
 resource "aws_codebuild_project" "blue_green_deploy" {
   name          = "${var.app_name}-blue-green-deploy"
