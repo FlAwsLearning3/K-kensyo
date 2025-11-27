@@ -80,9 +80,9 @@ resource "aws_ecs_task_definition" "frontend" {
   ])
 }
 
-# Backend Task Definition
-resource "aws_ecs_task_definition" "backend" {
-  family                   = "${var.app_name}-backend"
+# Backend Blue Task Definition
+resource "aws_ecs_task_definition" "backend_blue" {
+  family                   = "${var.app_name}-backend-blue"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = var.cpu
@@ -97,6 +97,43 @@ resource "aws_ecs_task_definition" "backend" {
       command = [
         "-c",
         "echo 'Backend Blue v1.0 - Service Connect' > /usr/share/nginx/html/index.html && sed -i 's/listen       80/listen       8080/' /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
+      ]
+      portMappings = [
+        {
+          name          = "backend-port"
+          containerPort = 8080
+          protocol      = "tcp"
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.backend.name
+          "awslogs-region"        = var.region
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+    }
+  ])
+}
+
+# Backend Green Task Definition
+resource "aws_ecs_task_definition" "backend_green" {
+  family                   = "${var.app_name}-backend-green"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.cpu
+  memory                   = var.memory
+  execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+
+  container_definitions = jsonencode([
+    {
+      name  = "backend"
+      image = "nginx:alpine"
+      entryPoint = ["/bin/sh"]
+      command = [
+        "-c",
+        "echo 'Backend Green v2.0 - Service Connect' > /usr/share/nginx/html/index.html && sed -i 's/listen       80/listen       8080/' /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
       ]
       portMappings = [
         {
@@ -230,7 +267,7 @@ resource "aws_ecs_service" "frontend" {
 resource "aws_ecs_service" "backend_blue" {
   name            = "${var.app_name}-backend-blue"
   cluster         = aws_ecs_cluster.backend.id
-  task_definition = aws_ecs_task_definition.backend.arn
+  task_definition = aws_ecs_task_definition.backend_blue.arn
   desired_count   = 1
   launch_type     = "FARGATE"
   force_new_deployment = true
@@ -261,7 +298,7 @@ resource "aws_ecs_service" "backend_blue" {
 resource "aws_ecs_service" "backend_green" {
   name            = "${var.app_name}-backend-green"
   cluster         = aws_ecs_cluster.backend.id
-  task_definition = aws_ecs_task_definition.backend.arn
+  task_definition = aws_ecs_task_definition.backend_green.arn
   desired_count   = 0
   launch_type     = "FARGATE"
 
