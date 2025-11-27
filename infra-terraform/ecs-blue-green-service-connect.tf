@@ -53,7 +53,7 @@ resource "aws_ecs_task_definition" "frontend" {
       entryPoint = ["/bin/sh"]
       command = [
         "-c",
-        "echo 'Frontend v2.0 - Blue-Green Deploy Test' > /usr/share/nginx/html/index.html && echo 'server { listen 80; location / { root /usr/share/nginx/html; index index.html; } location /api { proxy_pass http://backend:8080/; } }' > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
+        "echo 'Frontend v2.0 - Blue-Green Deploy Test' > /usr/share/nginx/html/index.html && echo 'server { listen 80; error_log /var/log/nginx/error.log debug; location / { root /usr/share/nginx/html; index index.html; } location /api { proxy_pass http://backend:8080/; proxy_connect_timeout 5s; proxy_send_timeout 5s; proxy_read_timeout 5s; } }' > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
       ]
       portMappings = [
         {
@@ -254,6 +254,16 @@ resource "aws_ecs_service" "frontend" {
   service_connect_configuration {
     enabled   = true
     namespace = aws_service_discovery_http_namespace.main.arn
+    
+    service {
+      port_name      = "frontend-port"
+      discovery_name = "frontend"
+      
+      client_alias {
+        port     = 80
+        dns_name = "frontend"
+      }
+    }
   }
 
   depends_on = [
