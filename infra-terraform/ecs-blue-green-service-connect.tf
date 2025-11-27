@@ -45,6 +45,7 @@ resource "aws_ecs_task_definition" "frontend" {
   cpu                      = var.cpu
   memory                   = var.memory
   execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
 
   container_definitions = jsonencode([
     {
@@ -88,6 +89,7 @@ resource "aws_ecs_task_definition" "backend_blue" {
   cpu                      = var.cpu
   memory                   = var.memory
   execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
 
   container_definitions = jsonencode([
     {
@@ -96,7 +98,7 @@ resource "aws_ecs_task_definition" "backend_blue" {
       entryPoint = ["/bin/sh"]
       command = [
         "-c",
-        "rm -f /etc/nginx/conf.d/* && echo 'server { listen 8080; location / { add_header Content-Type text/plain; return 200 \"Backend Blue v1.0 - Service Connect\"; } }' > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
+        "rm -f /etc/nginx/conf.d/default.conf && echo 'server { listen 8080; location / { add_header Content-Type text/plain; return 200 \"Backend Blue v1.0 - Service Connect\"; } }' > /etc/nginx/conf.d/backend.conf && nginx -g 'daemon off;'"
       ]
       portMappings = [
         {
@@ -125,6 +127,7 @@ resource "aws_ecs_task_definition" "backend_green" {
   cpu                      = var.cpu
   memory                   = var.memory
   execution_role_arn       = aws_iam_role.ecs_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
 
   container_definitions = jsonencode([
     {
@@ -233,11 +236,12 @@ resource "aws_lb_listener" "main" {
 
 # Frontend Service (Cluster A)
 resource "aws_ecs_service" "frontend" {
-  name                = "${var.app_name}-frontend"
-  cluster             = aws_ecs_cluster.frontend.id
-  task_definition     = aws_ecs_task_definition.frontend.arn
-  desired_count       = 1
-  launch_type         = "FARGATE"
+  name                   = "${var.app_name}-frontend"
+  cluster                = aws_ecs_cluster.frontend.id
+  task_definition        = aws_ecs_task_definition.frontend.arn
+  desired_count          = 1
+  launch_type            = "FARGATE"
+  enable_execute_command = true
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -254,16 +258,6 @@ resource "aws_ecs_service" "frontend" {
   service_connect_configuration {
     enabled   = true
     namespace = aws_service_discovery_http_namespace.main.arn
-    
-    service {
-      port_name      = "frontend-port"
-      discovery_name = "frontend"
-      
-      client_alias {
-        port     = 80
-        dns_name = "frontend"
-      }
-    }
   }
 
   depends_on = [
@@ -275,12 +269,18 @@ resource "aws_ecs_service" "frontend" {
 
 # Backend Blue Service (Cluster B) with Service Connect
 resource "aws_ecs_service" "backend_blue" {
-  name            = "${var.app_name}-backend-blue"
-  cluster         = aws_ecs_cluster.backend.id
-  task_definition = aws_ecs_task_definition.backend_blue.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-  force_new_deployment = true
+  name                   = "${var.app_name}-backend-blue"
+  cluster                = aws_ecs_cluster.backend.id
+  task_definition        = aws_ecs_task_definition.backend_blue.arn
+  desired_count          = 1
+  launch_type            = "FARGATE"
+  force_new_deployment   = true
+  enable_execute_command = true
+  
+  deployment_configuration {
+    maximum_percent         = 200
+    minimum_healthy_percent = 100
+  }
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -299,6 +299,15 @@ resource "aws_ecs_service" "backend_blue" {
       client_alias {
         port     = 8080
         dns_name = "backend"
+      }
+    }
+    
+    log_configuration {
+      log_driver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.backend.name
+        "awslogs-region"        = var.region
+        "awslogs-stream-prefix" = "service-connect"
       }
     }
   }
@@ -370,6 +379,50 @@ resource "aws_iam_role" "ecs_execution_role" {
 resource "aws_iam_role_policy_attachment" "ecs_execution_role_policy" {
   role       = aws_iam_role.ecs_execution_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+# IAM Role for ECS Task (ECS Exec)
+resource "aws_iam_role" "ecs_task_role" {
+  name = "${var.app_name}-ecs-task-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_task_role_policy" {
+  role       = aws_iam_role.ecs_task_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "ecs_exec_policy" {
+  name = "${var.app_name}-ecs-exec-policy"
+  role = aws_iam_role.ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 
