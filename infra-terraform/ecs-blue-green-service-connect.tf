@@ -328,9 +328,7 @@ resource "aws_ecs_service" "backend_green" {
     }
   }
 
-  lifecycle {
-    ignore_changes = [task_definition]
-  }
+
 }
 
 # CloudWatch Log Groups

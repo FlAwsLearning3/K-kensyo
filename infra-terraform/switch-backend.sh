@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Blue-Green Backend切り替えスクリプト
+export AWS_DEFAULT_REGION=ap-northeast-1
 
 echo "=== Blue-Green Backend切り替え開始 ==="
 
