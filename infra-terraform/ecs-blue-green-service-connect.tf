@@ -296,15 +296,6 @@ resource "aws_ecs_service" "backend_blue" {
         dns_name = "backend"
       }
     }
-    
-    log_configuration {
-      log_driver = "awslogs"
-      options = {
-        "awslogs-group"         = aws_cloudwatch_log_group.backend.name
-        "awslogs-region"        = var.region
-        "awslogs-stream-prefix" = "service-connect"
-      }
-    }
   }
 }
 
