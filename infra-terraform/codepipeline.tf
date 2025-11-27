@@ -1,21 +1,11 @@
 # =============================================================================
-# CodePipeline CI/CDパイプライン定義
-# 
-# このファイルでは以下のリソースを定義しています：
-# - S3バケット（アーティファクト保存用）
-# - CodeBuild プロジェクト（イメージビルド用）
-# - CodePipeline（ソース→ビルド→デプロイの自動化）
-# - 必要なIAMロールと権限
-# 
-# パイプラインの流れ：
-# 1. GitHubからソースコードを取得
-# 2. CodeBuildでDockerイメージをビルドしECRにプッシュ
-# 3. カスタムアクションでECSネイティブブルーグリーンデプロイを実行
+# CodePipeline + CodeBuild for Blue-Green Deployment
 # =============================================================================
 
-# S3 Bucket for Pipeline Artifacts
-resource "aws_s3_bucket" "pipeline_artifacts" {
-  bucket = "${var.app_name}-pipeline-artifacts-${random_string.bucket_suffix.result}"
+# S3 Bucket for CodePipeline artifacts
+resource "aws_s3_bucket" "codepipeline_artifacts" {
+  bucket        = "${var.app_name}-codepipeline-artifacts-${random_string.bucket_suffix.result}"
+  force_destroy = true
 }
 
 resource "random_string" "bucket_suffix" {
@@ -24,15 +14,15 @@ resource "random_string" "bucket_suffix" {
   upper   = false
 }
 
-resource "aws_s3_bucket_versioning" "pipeline_artifacts" {
-  bucket = aws_s3_bucket.pipeline_artifacts.id
+resource "aws_s3_bucket_versioning" "codepipeline_artifacts" {
+  bucket = aws_s3_bucket.codepipeline_artifacts.id
   versioning_configuration {
     status = "Enabled"
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "pipeline_artifacts" {
-  bucket = aws_s3_bucket.pipeline_artifacts.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "codepipeline_artifacts" {
+  bucket = aws_s3_bucket.codepipeline_artifacts.id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -42,8 +32,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "pipeline_artifact
 }
 
 # CodeBuild Project
-resource "aws_codebuild_project" "build" {
-  name          = "${var.app_name}-build"
+resource "aws_codebuild_project" "blue_green_deploy" {
+  name          = "${var.app_name}-blue-green-deploy"
+  description   = "Blue-Green deployment for ECS with Service Connect"
   service_role  = aws_iam_role.codebuild_role.arn
 
   artifacts {
@@ -55,27 +46,6 @@ resource "aws_codebuild_project" "build" {
     image                      = "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
     type                       = "LINUX_CONTAINER"
     image_pull_credentials_type = "CODEBUILD"
-    privileged_mode            = true
-
-    environment_variable {
-      name  = "AWS_DEFAULT_REGION"
-      value = var.region
-    }
-
-    environment_variable {
-      name  = "AWS_ACCOUNT_ID"
-      value = data.aws_caller_identity.current.account_id
-    }
-
-    environment_variable {
-      name  = "IMAGE_REPO_NAME"
-      value = var.ecr_repository_name
-    }
-
-    environment_variable {
-      name  = "IMAGE_TAG"
-      value = "latest"
-    }
   }
 
   source {
@@ -84,15 +54,13 @@ resource "aws_codebuild_project" "build" {
   }
 }
 
-
-
 # CodePipeline
-resource "aws_codepipeline" "main" {
-  name     = "${var.app_name}-pipeline"
+resource "aws_codepipeline" "blue_green_pipeline" {
+  name     = "${var.app_name}-blue-green-pipeline"
   role_arn = aws_iam_role.codepipeline_role.arn
 
   artifact_store {
-    location = aws_s3_bucket.pipeline_artifacts.bucket
+    location = aws_s3_bucket.codepipeline_artifacts.bucket
     type     = "S3"
   }
 
@@ -103,32 +71,13 @@ resource "aws_codepipeline" "main" {
       name             = "Source"
       category         = "Source"
       owner            = "AWS"
-      provider         = "CodeStarSourceConnection"
+      provider         = "S3"
       version          = "1"
       output_artifacts = ["source_output"]
 
       configuration = {
-        ConnectionArn    = aws_codestarconnections_connection.github.arn
-        FullRepositoryId = "${var.github_owner}/${var.github_repo}"
-        BranchName       = var.github_branch
-      }
-    }
-  }
-
-  stage {
-    name = "Build"
-
-    action {
-      name             = "Build"
-      category         = "Build"
-      owner            = "AWS"
-      provider         = "CodeBuild"
-      input_artifacts  = ["source_output"]
-      output_artifacts = ["build_output"]
-      version          = "1"
-
-      configuration = {
-        ProjectName = aws_codebuild_project.build.name
+        S3Bucket    = aws_s3_bucket.codepipeline_artifacts.bucket
+        S3ObjectKey = "source.zip"
       }
     }
   }
@@ -137,27 +86,19 @@ resource "aws_codepipeline" "main" {
     name = "Deploy"
 
     action {
-      name     = "Deploy"
-      category = "Invoke"
-      owner    = "AWS"
-      provider = "Lambda"
-      version  = "1"
+      name             = "Deploy"
+      category         = "Build"
+      owner            = "AWS"
+      provider         = "CodeBuild"
+      input_artifacts  = ["source_output"]
+      version          = "1"
 
       configuration = {
-        FunctionName = aws_lambda_function.blue_green_controller.function_name
+        ProjectName = aws_codebuild_project.blue_green_deploy.name
       }
     }
   }
 }
-
-# CodeStar Connection for GitHub
-resource "aws_codestarconnections_connection" "github" {
-  name          = "${var.app_name}-github-connection"
-  provider_type = "GitHub"
-}
-
-# Data source for current AWS account
-data "aws_caller_identity" "current" {}
 
 # IAM Role for CodeBuild
 resource "aws_iam_role" "codebuild_role" {
@@ -178,7 +119,8 @@ resource "aws_iam_role" "codebuild_role" {
 }
 
 resource "aws_iam_role_policy" "codebuild_policy" {
-  role = aws_iam_role.codebuild_role.name
+  name = "${var.app_name}-codebuild-policy"
+  role = aws_iam_role.codebuild_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -196,30 +138,47 @@ resource "aws_iam_role_policy" "codebuild_policy" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:GetObjectVersion",
-          "s3:PutObject"
+          "s3:GetObjectVersion"
         ]
-        Resource = "${aws_s3_bucket.pipeline_artifacts.arn}/*"
+        Resource = "${aws_s3_bucket.codepipeline_artifacts.arn}/*"
       },
       {
         Effect = "Allow"
         Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-          "ecr:GetAuthorizationToken",
-          "ecr:PutImage",
-          "ecr:InitiateLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:CompleteLayerUpload"
+          "ecs:UpdateService",
+          "ecs:DescribeServices",
+          "ecs:DescribeClusters",
+          "ecs:DescribeTaskDefinition",
+          "ecs:RegisterTaskDefinition"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "servicediscovery:ListNamespaces",
+          "servicediscovery:GetNamespace"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:PutParameter"
+        ]
+        Resource = "arn:aws:ssm:${var.region}:*:parameter/blue-green-app/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "elbv2:DescribeLoadBalancers"
         ]
         Resource = "*"
       }
     ]
   })
 }
-
-
 
 # IAM Role for CodePipeline
 resource "aws_iam_role" "codepipeline_role" {
@@ -240,7 +199,8 @@ resource "aws_iam_role" "codepipeline_role" {
 }
 
 resource "aws_iam_role_policy" "codepipeline_policy" {
-  role = aws_iam_role.codepipeline_role.name
+  name = "${var.app_name}-codepipeline-policy"
+  role = aws_iam_role.codepipeline_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -254,8 +214,8 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           "s3:PutObject"
         ]
         Resource = [
-          aws_s3_bucket.pipeline_artifacts.arn,
-          "${aws_s3_bucket.pipeline_artifacts.arn}/*"
+          aws_s3_bucket.codepipeline_artifacts.arn,
+          "${aws_s3_bucket.codepipeline_artifacts.arn}/*"
         ]
       },
       {
@@ -264,22 +224,28 @@ resource "aws_iam_role_policy" "codepipeline_policy" {
           "codebuild:BatchGetBuilds",
           "codebuild:StartBuild"
         ]
-        Resource = aws_codebuild_project.build.arn
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "codestar-connections:UseConnection"
-        ]
-        Resource = aws_codestarconnections_connection.github.arn
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "lambda:InvokeFunction"
-        ]
-        Resource = aws_lambda_function.blue_green_controller.arn
+        Resource = aws_codebuild_project.blue_green_deploy.arn
       }
     ]
   })
+}
+
+# SSM Parameter for active backend (初期値)
+resource "aws_ssm_parameter" "active_backend" {
+  name  = "/blue-green-app/active-backend"
+  type  = "String"
+  value = "blue"
+  
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# Output
+output "codepipeline_name" {
+  value = aws_codepipeline.blue_green_pipeline.name
+}
+
+output "s3_bucket_name" {
+  value = aws_s3_bucket.codepipeline_artifacts.bucket
 }

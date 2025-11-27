@@ -1,59 +1,68 @@
 #!/bin/bash
 
-# Blue/Green Deployment Script for ECS with Service Connect
+# =============================================================================
+# Blue-Green Deployment Trigger Script
+# =============================================================================
 
 set -e
 
-# Variables
-APP_NAME=${1:-"blue-green-app"}
-NEW_IMAGE=${2:-"nginx:latest"}
-REGION=${3:-"ap-northeast-1"}
+APP_NAME="blue-green-app"
+REGION="ap-northeast-1"
 
-echo "Starting Blue/Green deployment for $APP_NAME with image $NEW_IMAGE"
+echo "🚀 Starting Blue-Green Deployment..."
 
-# Get current task definition
-TASK_DEFINITION=$(aws ecs describe-task-definition \
-    --task-definition $APP_NAME \
-    --region $REGION \
-    --query 'taskDefinition' \
-    --output json)
+# S3バケット名を取得
+BUCKET_NAME=$(aws s3api list-buckets --query "Buckets[?contains(Name, '${APP_NAME}-codepipeline-artifacts')].Name" --output text)
 
-# Create new task definition with updated image
-NEW_TASK_DEFINITION=$(echo $TASK_DEFINITION | jq --arg IMAGE "$NEW_IMAGE" '
-    .containerDefinitions[0].image = $IMAGE |
-    del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .placementConstraints, .compatibilities, .registeredAt, .registeredBy)
-')
+if [ -z "$BUCKET_NAME" ]; then
+    echo "❌ S3 bucket not found. Please run 'terraform apply' first."
+    exit 1
+fi
 
-# Register new task definition
-NEW_TASK_DEF_ARN=$(echo $NEW_TASK_DEFINITION | aws ecs register-task-definition \
-    --region $REGION \
-    --cli-input-json file:///dev/stdin \
-    --query 'taskDefinition.taskDefinitionArn' \
-    --output text)
+echo "📦 Using S3 bucket: $BUCKET_NAME"
 
-echo "New task definition registered: $NEW_TASK_DEF_ARN"
+# 現在のディレクトリをzipに圧縮
+echo "📁 Creating source package..."
+zip -r source.zip . -x "*.git*" "*.terraform*" "terraform.tfstate*" "*.zip"
 
-# Create CodeDeploy deployment
-DEPLOYMENT_ID=$(aws deploy create-deployment \
-    --application-name $APP_NAME \
-    --deployment-group-name "${APP_NAME}-deployment-group" \
-    --region $REGION \
-    --revision '{
-        "revisionType": "AppSpecContent",
-        "appSpecContent": {
-            "content": "{\"version\":\"0.0\",\"Resources\":[{\"TargetService\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"'$NEW_TASK_DEF_ARN'\",\"LoadBalancerInfo\":{\"ContainerName\":\"app\",\"ContainerPort\":'$CONTAINER_PORT'}}}}]}"
-        }
-    }' \
-    --query 'deploymentId' \
-    --output text)
+# S3にアップロード
+echo "⬆️  Uploading source to S3..."
+aws s3 cp source.zip s3://$BUCKET_NAME/source.zip
 
-echo "Deployment started with ID: $DEPLOYMENT_ID"
+# CodePipelineを実行
+echo "🔄 Starting CodePipeline..."
+PIPELINE_NAME="${APP_NAME}-blue-green-pipeline"
 
-# Wait for deployment to complete
-echo "Waiting for deployment to complete..."
-aws deploy wait deployment-successful \
-    --deployment-id $DEPLOYMENT_ID \
-    --region $REGION
+aws codepipeline start-pipeline-execution --name $PIPELINE_NAME
 
-echo "Blue/Green deployment completed successfully!"
-echo "Service Connect endpoint: app:8080"
+echo "✅ Pipeline started successfully!"
+echo "🔗 Monitor progress at: https://console.aws.amazon.com/codesuite/codepipeline/pipelines/${PIPELINE_NAME}/view"
+
+# 実行状況を監視（オプション）
+echo ""
+echo "📊 Monitoring pipeline execution..."
+echo "Press Ctrl+C to stop monitoring (pipeline will continue running)"
+
+while true; do
+    STATUS=$(aws codepipeline get-pipeline-execution \
+        --pipeline-name $PIPELINE_NAME \
+        --pipeline-execution-id $(aws codepipeline list-pipeline-executions --pipeline-name $PIPELINE_NAME --query "pipelineExecutionSummaries[0].pipelineExecutionId" --output text) \
+        --query "pipelineExecution.status" --output text 2>/dev/null || echo "Unknown")
+    
+    echo "Current status: $STATUS"
+    
+    if [ "$STATUS" = "Succeeded" ]; then
+        echo "🎉 Deployment completed successfully!"
+        break
+    elif [ "$STATUS" = "Failed" ]; then
+        echo "❌ Deployment failed!"
+        exit 1
+    fi
+    
+    sleep 30
+done
+
+# クリーンアップ
+rm -f source.zip
+
+echo "🏁 Blue-Green deployment process completed!"
